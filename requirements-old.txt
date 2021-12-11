@@ -1,0 +1,9 @@
+numpy==1.21.3
+requests==2.25.1
+discord.py==1.7.3
+urllib3==1.25.9
+opencv_python==4.5.1.48
+discord==1.7.3
+python-dotenv==0.19.2
+python_dateutil==2.8.2
+qrcode==7.3.1

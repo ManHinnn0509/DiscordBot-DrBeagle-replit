@@ -1,0 +1,199 @@
+from calendar import c
+import sys
+
+import cv2
+import numpy as np
+import requests as req
+import qrcode as qrcode
+
+from uuid import uuid4
+from discord.ext import commands
+
+from classes import Cog_Extension
+from qrcode import image
+from util.msg_utils import isOwner, tagAuthor, sendFileMessage
+from util.time_utils import getTimestampNow
+from util.embed_utils import createDefaultEmbed
+
+# Imgur album for different QR Code for testing: https://imgur.com/a/G45eZfb
+
+class QR_Code(Cog_Extension):
+    
+    @commands.command(
+        aliases = ["qr", "qrc", "qrcode"], hidden = True
+    )
+    async def qrcodec(self, ctx, option=None, data=None, *args):
+        
+        # Disable this command to public ~
+        if not (isOwner(ctx)):
+            return
+        
+        tag = tagAuthor(ctx)
+        
+        # Generate QR Code
+        if (option == "generate" or option == "-g"):
+            await genQR_Code(ctx, data, args)
+
+        # Decode QR Code
+        elif (option == "decode" or option == "-d"):
+            await decodeQR_Code(ctx, data)
+        
+        # Help
+        elif (option == "help" or option == "-h"):
+            embed = await createHelpEmbed(ctx)
+            await ctx.send(tag, embed=embed)
+
+        # Invalid input
+        else:
+            await ctx.send(tag + "\n" + "Invalid input. Please check `$qr help`")
+        
+def setup(bot):
+    bot.add_cog(QR_Code(bot))
+
+async def createHelpEmbed(ctx):
+    desc = f"""
+
+    This command's generating part is base on python-qrcode
+    Github page [here](https://github.com/lincolnloop/python-qrcode)
+
+    **help / -h**
+        - This help message
+    
+    **generate / -g**
+        - Generates a QR Code from data
+
+        Usage:
+            ```$qr -g "QR CODE DATA" [kwargs for make_image()]```
+        Example:
+            ```$qr -g "Hello, world!" fill_color=#0000ff back_color=black```
+    
+    **decode / -d**
+        - Decode data from QR Code
+
+        Usage:
+            ```$qr -d [URL]```
+        Example:
+            ```$qr -d https://i.imgur.com/wofwtnt.png```
+    """
+
+    embed = createDefaultEmbed(ctx)
+    embed.description = desc
+    embed.title = "__**QR Code Command**__"
+
+    return embed
+
+async def decodeQR_Code(ctx, url):
+    """
+        Operation for -d option.
+
+        >> Get QR Code from URL, decode QR Code, send decoded content
+    """
+    tag = tagAuthor(ctx)
+    if (url == None):
+        await ctx.send(tag + "\n" + "Please provide a URL!")
+        return
+    
+    msg = await ctx.send(tag + "\n" + "Please wait...")
+    
+    # Read image from URL
+    img = None
+    try:
+        r = req.get(url=url)
+        img = np.frombuffer(r.content, np.uint8)
+        img = cv2.imdecode(img, cv2.IMREAD_COLOR)
+    except Exception as e:
+        # print(e)
+        await msg.edit(content=tag + "\n" + "Unable to read QR Code from URL.")
+        return
+    
+    # Decode the QR Code
+    detector = cv2.QRCodeDetector()
+    decodedData, verticesArray, binQR_Code = detector.detectAndDecode(img)
+
+    if (len(decodedData) == 0):
+        # The QR Code should be in regular form
+        # Black & white
+        await msg.edit(content=tag + "\n" + "Nothing decoded from QR Code.")
+        return
+    
+    resultMsg = tag + "\n" + "Data decoded from QR Code: " + "\n"
+    resultMsg += "```" + "\n" + decodedData + "\n" + "```"
+    await msg.edit(content=resultMsg)
+
+async def genQR_Code(ctx, data, args):
+    """
+        Operation of the -g option
+        
+        >> Gererate QR Code, save as temp image, send to channel
+    """
+    tag = tagAuthor(ctx)
+    if (data == None):
+        await ctx.send(tag + "\n" + "Please provide input data.")
+        return
+    
+    try:
+        c = qrcode.QRCode(border=2)
+        c.add_data(data)
+        c.make()
+
+        # Build args for make_image() function
+        kwargs = {}
+        if (len(args) != 0):
+            kwargs = __argsProcess(args)
+        
+        img = c.make_image(**kwargs)
+
+        fileName = f"qr_code_{getTimestampNow()}_{uuid4()}.png"
+        img.save(fileName)
+
+        msg, result = await sendFileMessage(ctx, tag, fileName, f"./{fileName}", removeFile=True)
+    except Exception as e:
+        # print(repr(e))
+
+        errorMsg = tag + "\n" + "Exception caught will following message:"
+        errorMsg += "```" + "\n" + repr(e) + "\n" + "```"
+        await ctx.send(errorMsg)
+
+def __argsProcess(args):
+
+    # What keywords / parameters that requires Class obejct
+    convClass = ("image_factory")
+
+    # A pool of modules that might contain the target class
+    import qrcode.image
+    import qrcode.image.styledpil
+    import qrcode.image.styles
+    modulesList = (
+        qrcode, qrcode.image,
+        qrcode.image.styledpil,
+        qrcode.image.styles.moduledrawers, qrcode.image.styles.colormasks
+    )
+
+    # Import all the classes that might use
+    from qrcode.image.styles.moduledrawers import RoundedModuleDrawer, CircleModuleDrawer, GappedSquareModuleDrawer, \
+        VerticalBarsDrawer, HorizontalBarsDrawer, SquareModuleDrawer
+    from qrcode.image.styles.colormasks import RadialGradiantColorMask, SolidFillColorMask, \
+        SquareGradiantColorMask, HorizontalGradiantColorMask, VerticalGradiantColorMask, ImageColorMask
+    from qrcode.image.styledpil import StyledPilImage, SolidFillColorMask
+
+    kwargs = {}
+    for arg in args:
+            p = arg.split("=")
+
+            key = p[0]
+            value = '='.join(p[1::])
+
+            # Convert the str class name into Class object
+            if (key in convClass):
+                # Find the target class in the modules pool
+                for m in modulesList:
+                    try:
+                        value = getattr(m, value)
+                    except Exception as e:
+                        # print(e)
+                        continue
+                    break
+            
+            kwargs[key] = value if (type(value) != str) else eval(value)
+
+    return kwargs
